@@ -256,6 +256,12 @@ if __name__ == '__main__':
     rpctransport.set_credentials(username, password, domain, lmhash=lm_hash, nthash=nt_hash, aesKey=aes_key)
     if use_kerberos:
         rpctransport.set_kerberos(True, kdcHost=kdc_host)
+        # hept_map built the binding from the -dc-ip value, so the transport's
+        # remote name is an IP. Kerberos needs an SPN built from the DC FQDN,
+        # so override the remote name while keeping the IP as the TCP target.
+        if kdc_host:
+            rpctransport.setRemoteName(kdc_host)
+            rpctransport.setRemoteHost(host)
 
     dce = rpctransport.get_dce_rpc()
     if use_kerberos:
