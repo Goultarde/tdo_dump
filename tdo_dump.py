@@ -283,9 +283,11 @@ if __name__ == '__main__':
     # Synching the TDO object via DRSGetNCChanges
     try:
         record = dump_tdo(dce, context_handle, dsa_guid, tdo_guid)
-    except drsuapi.DCERPCSessionError:
+    except drsuapi.DCERPCSessionError as e:
         drsuapi.hDRSUnbind(dce, context_handle)
-        print('[!] Trust GUID not found!')
+        print('[!] DRSGetNCChanges failed: {}'.format(e))
+        print('[!] Common causes: TDO GUID does not exist, DSA GUID does not exist, '
+              'or the authenticated user lacks DRS replication rights on the target object.')
         sys.exit(0)
 
     drsuapi.hDRSUnbind(dce, context_handle)
