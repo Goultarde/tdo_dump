@@ -191,11 +191,25 @@ def argparser(argv):
     arg_parser.add_argument('-d', '--domain', required=True, dest='domain', help='FQDN of the domain we authenticate with')
     arg_parser.add_argument('-p', '--password', required=False, dest='password', help='User password')
     arg_parser.add_argument('--hashes', required=False, action='store', metavar = 'LMHASH:NTHASH', help='NTLM hashes, format is [LMHASH:]NTHASH')
+    arg_parser.add_argument('-k', '--kerberos', action='store_true', dest='use_kerberos',
+                            help='Use Kerberos authentication. Grabs credentials from ccache file (KRB5CCNAME) '
+                                 'based on target parameters. If valid credentials cannot be found, it will use '
+                                 'the ones specified in the command line')
+    arg_parser.add_argument('-no-pass', '--no-pass', action='store_true', dest='no_pass',
+                            help="don't ask for password (useful for -k)")
+    arg_parser.add_argument('-aesKey', '--aes-key', action='store', metavar='hex key', dest='aes_key',
+                            help='AES key to use for Kerberos Authentication (128 or 256 bits)')
+    arg_parser.add_argument('-dc-host', '--dc-host', action='store', dest='dc_host',
+                            help='Hostname of the Domain Controller (KDC) to use. If omitted, the domain part '
+                                 'of the target will be used')
     arg_parser.add_argument('-t', '--dc-ip', dest='domain_controller', help='IP address of the Domain Controller to target')
     arg_parser.add_argument('--dsa-guid', required=True, dest='dsa_guid', help='DSA GUID')
     arg_parser.add_argument('--tdo-guid', required=True, dest='tdo_guid', help='Truted Domain Object GUID')
     arg_parser.add_argument('--debug', action="store_true", help='Debug mode')
     args = arg_parser.parse_args(argv)
+
+    if args.aes_key is not None:
+        args.use_kerberos = True
 
     if args.hashes:
         try:
@@ -207,9 +221,11 @@ def argparser(argv):
     else:
         args.lmhash = args.nthash = str()
 
-    if args.password is None and not args.hashes:
+    if args.password is None and not args.hashes and not args.no_pass and not args.use_kerberos:
         from getpass import getpass
         args.password = getpass('Password:')
+    if args.password is None:
+        args.password = str()
     return args
 
 if __name__ == '__main__':
@@ -223,6 +239,9 @@ if __name__ == '__main__':
     dsa_guid = args.dsa_guid
     domain = args.domain
     password = args.password
+    aes_key = args.aes_key
+    use_kerberos = args.use_kerberos
+    kdc_host = args.dc_host
 
     debugprint = print if args.debug else lambda *a, **k: None
 
@@ -234,10 +253,15 @@ if __name__ == '__main__':
     binding_string_dsruapi = epm.hept_map(host, dsruapi_uuid, dataRepresentation=syntax, protocol='ncacn_ip_tcp')
     debugprint("[x] Binding string: {}".format(binding_string_dsruapi))
     rpctransport = transport.DCERPCTransportFactory(binding_string_dsruapi)
+    rpctransport.set_credentials(username, password, domain, lmhash=lm_hash, nthash=nt_hash, aesKey=aes_key)
+    if use_kerberos:
+        rpctransport.set_kerberos(True, kdcHost=kdc_host)
 
     dce = rpctransport.get_dce_rpc()
+    if use_kerberos:
+        dce.set_auth_type(rpcrt.RPC_C_AUTHN_GSS_NEGOTIATE)
     dce.connect()
-    dce.set_credentials(username, password, domain, lmhash=lm_hash, nthash=nt_hash)
+    dce.set_credentials(*rpctransport.get_credentials())
     dce.set_auth_level(authn_level_packet)
     dce.bind(dsruapi_uuid)
 
