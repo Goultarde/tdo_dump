@@ -185,6 +185,20 @@ def dump_tdo(dce, context_handle, dsa_guid, tdo_guid):
     record = dce.request(request)
     return record
 
+def normalize_ad_guid(guid):
+    # AD-generated objectGUID values are UUID v4, so in the standard
+    # mixed-endian textual form (ADUC / PowerShell / DSInternals) the third
+    # group always starts with '4'. Some tools (notably nxc --query) emit the
+    # raw byte order instead, which impacket.uuid.string_to_bin would then
+    # double-swap. When the version digit is missing, pre-swap the first three
+    # groups so string_to_bin gets the format it expects.
+    parts = guid.split('-')
+    if len(parts) != 5 or parts[2][:1].lower() == '4':
+        return guid
+    def swap(group):
+        return ''.join(reversed([group[i:i+2] for i in range(0, len(group), 2)]))
+    return '-'.join([swap(parts[0]), swap(parts[1]), swap(parts[2]), parts[3], parts[4]])
+
 def argparser(argv):
     arg_parser = argparse.ArgumentParser(prog='dump_tdo.py', description='\nDump a trusted domain object and display the secrets')
     arg_parser.add_argument('-u', '--user', required=True, help='User account used to dump the TDO')
@@ -235,8 +249,8 @@ if __name__ == '__main__':
     nt_hash = args.nthash
     lm_hash = args.lmhash
     username = args.user
-    tdo_guid = args.tdo_guid
-    dsa_guid = args.dsa_guid
+    tdo_guid = normalize_ad_guid(args.tdo_guid)
+    dsa_guid = normalize_ad_guid(args.dsa_guid)
     domain = args.domain
     password = args.password
     aes_key = args.aes_key
@@ -244,6 +258,10 @@ if __name__ == '__main__':
     kdc_host = args.dc_host
 
     debugprint = print if args.debug else lambda *a, **k: None
+    if tdo_guid != args.tdo_guid:
+        debugprint('[+] Detected raw-byte TDO GUID, normalized to {}'.format(tdo_guid))
+    if dsa_guid != args.dsa_guid:
+        debugprint('[+] Detected raw-byte DSA GUID, normalized to {}'.format(dsa_guid))
 
     authn_level_packet = rpcrt.RPC_C_AUTHN_LEVEL_PKT_PRIVACY
     dsruapi_uuid = drsuapi.MSRPC_UUID_DRSUAPI
