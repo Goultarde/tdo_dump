@@ -214,9 +214,9 @@ def argparser(argv):
     arg_parser.add_argument('-aesKey', '--aes-key', action='store', metavar='hex key', dest='aes_key',
                             help='AES key to use for Kerberos Authentication (128 or 256 bits)')
     arg_parser.add_argument('-dc-host', '--dc-host', action='store', dest='dc_host',
-                            help='Hostname of the Domain Controller (KDC) to use. If omitted, the domain part '
-                                 'of the target will be used')
-    arg_parser.add_argument('-t', '--dc-ip', dest='domain_controller', help='IP address of the Domain Controller to target')
+                            help='FQDN of the Domain Controller, used to build the Kerberos SPN '
+                                 'when -t is an IP. If omitted, the value passed to -t is used as-is')
+    arg_parser.add_argument('-t', '--dc-ip', dest='domain_controller', help='IP address or FQDN of the Domain Controller to target. With Kerberos, an IP requires --dc-host so the SPN can be built from the DC FQDN')
     arg_parser.add_argument('--dsa-guid', required=True, dest='dsa_guid', help='DSA GUID')
     arg_parser.add_argument('--tdo-guid', required=True, dest='tdo_guid', help='Truted Domain Object GUID')
     arg_parser.add_argument('--debug', action="store_true", help='Debug mode')
