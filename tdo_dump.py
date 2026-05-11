@@ -185,6 +185,14 @@ def dump_tdo(dce, context_handle, dsa_guid, tdo_guid):
     record = dce.request(request)
     return record
 
+def swap_ad_guid_bytes(guid):
+    parts = guid.split('-')
+    if len(parts) != 5:
+        return guid
+    def swap(group):
+        return ''.join(reversed([group[i:i+2] for i in range(0, len(group), 2)]))
+    return '-'.join([swap(parts[0]), swap(parts[1]), swap(parts[2]), parts[3], parts[4]])
+
 def normalize_ad_guid(guid):
     # AD-generated objectGUID values are UUID v4, so in the standard
     # mixed-endian textual form (ADUC / PowerShell / DSInternals) the third
@@ -192,12 +200,23 @@ def normalize_ad_guid(guid):
     # raw byte order instead, which impacket.uuid.string_to_bin would then
     # double-swap. When the version digit is missing, pre-swap the first three
     # groups so string_to_bin gets the format it expects.
+    # Ambiguous case: when the standard third group is '4Y4W', byte-swapping
+    # gives '4W4Y', so both forms start with '4' and this heuristic alone can't
+    # tell them apart. is_ambiguous_ad_guid() flags those, and the caller
+    # retries the DRS call with swapped GUIDs on failure.
     parts = guid.split('-')
     if len(parts) != 5 or parts[2][:1].lower() == '4':
         return guid
-    def swap(group):
-        return ''.join(reversed([group[i:i+2] for i in range(0, len(group), 2)]))
-    return '-'.join([swap(parts[0]), swap(parts[1]), swap(parts[2]), parts[3], parts[4]])
+    return swap_ad_guid_bytes(guid)
+
+def is_ambiguous_ad_guid(guid):
+    # Third group looks like '4*4*': both the standard and raw forms start
+    # with '4', so normalize_ad_guid() cannot decide and leaves it as-is.
+    parts = guid.split('-')
+    return (len(parts) == 5
+            and len(parts[2]) >= 3
+            and parts[2][0].lower() == '4'
+            and parts[2][2].lower() == '4')
 
 def argparser(argv):
     arg_parser = argparse.ArgumentParser(prog='dump_tdo.py', description='\nDump a trusted domain object and display the secrets')
@@ -219,6 +238,11 @@ def argparser(argv):
     arg_parser.add_argument('-t', '--dc-ip', dest='domain_controller', help='IP address or FQDN of the Domain Controller to target. With Kerberos, an IP requires --dc-host so the SPN can be built from the DC FQDN')
     arg_parser.add_argument('--dsa-guid', required=True, dest='dsa_guid', help='DSA GUID')
     arg_parser.add_argument('--tdo-guid', required=True, dest='tdo_guid', help='Truted Domain Object GUID')
+    arg_parser.add_argument('-r', '--raw', action='store_true', dest='raw_guid',
+                            help='Treat --tdo-guid and --dsa-guid as raw byte order '
+                                 '(e.g. from nxc --query) and pre-swap them. Without '
+                                 'this flag the format is auto-detected, with a retry '
+                                 'on failure to cover ambiguous UUID v4 GUIDs.')
     arg_parser.add_argument('--debug', action="store_true", help='Debug mode')
     args = arg_parser.parse_args(argv)
 
@@ -249,8 +273,12 @@ if __name__ == '__main__':
     nt_hash = args.nthash
     lm_hash = args.lmhash
     username = args.user
-    tdo_guid = normalize_ad_guid(args.tdo_guid)
-    dsa_guid = normalize_ad_guid(args.dsa_guid)
+    if args.raw_guid:
+        tdo_guid = swap_ad_guid_bytes(args.tdo_guid)
+        dsa_guid = swap_ad_guid_bytes(args.dsa_guid)
+    else:
+        tdo_guid = normalize_ad_guid(args.tdo_guid)
+        dsa_guid = normalize_ad_guid(args.dsa_guid)
     domain = args.domain
     password = args.password
     aes_key = args.aes_key
@@ -258,10 +286,14 @@ if __name__ == '__main__':
     kdc_host = args.dc_host
 
     debugprint = print if args.debug else lambda *a, **k: None
-    if tdo_guid != args.tdo_guid:
-        debugprint('[+] Detected raw-byte TDO GUID, normalized to {}'.format(tdo_guid))
-    if dsa_guid != args.dsa_guid:
-        debugprint('[+] Detected raw-byte DSA GUID, normalized to {}'.format(dsa_guid))
+    if args.raw_guid:
+        debugprint('[+] --raw set: pre-swapped TDO GUID to {}'.format(tdo_guid))
+        debugprint('[+] --raw set: pre-swapped DSA GUID to {}'.format(dsa_guid))
+    else:
+        if tdo_guid != args.tdo_guid:
+            debugprint('[+] Detected raw-byte TDO GUID, normalized to {}'.format(tdo_guid))
+        if dsa_guid != args.dsa_guid:
+            debugprint('[+] Detected raw-byte DSA GUID, normalized to {}'.format(dsa_guid))
 
     authn_level_packet = rpcrt.RPC_C_AUTHN_LEVEL_PKT_PRIVACY
     dsruapi_uuid = drsuapi.MSRPC_UUID_DRSUAPI
@@ -302,11 +334,30 @@ if __name__ == '__main__':
     try:
         record = dump_tdo(dce, context_handle, dsa_guid, tdo_guid)
     except drsuapi.DCERPCSessionError as e:
-        drsuapi.hDRSUnbind(dce, context_handle)
-        print('[!] DRSGetNCChanges failed: {}'.format(e))
-        print('[!] Common causes: TDO GUID does not exist, DSA GUID does not exist, '
-              'or the authenticated user lacks DRS replication rights on the target object.')
-        sys.exit(0)
+        # normalize_ad_guid() leaves ambiguous v4 GUIDs (third group '4*4*') in
+        # their input form because the byte-swapped variant also starts with
+        # '4'. If at least one of the two GUIDs is ambiguous, retry once with
+        # those swapped. --raw skips this retry: the user told us explicitly.
+        retry_tdo = swap_ad_guid_bytes(tdo_guid) if is_ambiguous_ad_guid(tdo_guid) else tdo_guid
+        retry_dsa = swap_ad_guid_bytes(dsa_guid) if is_ambiguous_ad_guid(dsa_guid) else dsa_guid
+        if args.raw_guid or (retry_tdo == tdo_guid and retry_dsa == dsa_guid):
+            drsuapi.hDRSUnbind(dce, context_handle)
+            print('[!] DRSGetNCChanges failed: {}'.format(e))
+            print('[!] Common causes: TDO GUID does not exist, DSA GUID does not exist, '
+                  'or the authenticated user lacks DRS replication rights on the target object.')
+            sys.exit(0)
+        debugprint('[+] DRSGetNCChanges failed ({}); ambiguous v4 GUID detected, '
+                   'retrying with byte-swapped GUIDs'.format(e))
+        try:
+            record = dump_tdo(dce, context_handle, retry_dsa, retry_tdo)
+        except drsuapi.DCERPCSessionError as e2:
+            drsuapi.hDRSUnbind(dce, context_handle)
+            print('[!] DRSGetNCChanges failed: {}'.format(e))
+            print('[!] Retry with byte-swapped ambiguous GUIDs also failed: {}'.format(e2))
+            print('[!] Common causes: TDO GUID does not exist, DSA GUID does not exist, '
+                  'or the authenticated user lacks DRS replication rights on the target object.')
+            sys.exit(0)
+        tdo_guid, dsa_guid = retry_tdo, retry_dsa
 
     drsuapi.hDRSUnbind(dce, context_handle)
     replyVersion = 'V{}'.format(record['pdwOutVersion'])
