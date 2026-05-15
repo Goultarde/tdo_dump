@@ -219,7 +219,7 @@ def is_ambiguous_ad_guid(guid):
             and parts[2][2].lower() == '4')
 
 def argparser(argv):
-    arg_parser = argparse.ArgumentParser(prog='dump_tdo.py', description='\nDump a trusted domain object and display the secrets')
+    arg_parser = argparse.ArgumentParser(prog='tdo-dump', description='\nDump a trusted domain object and display the secrets')
     arg_parser.add_argument('-u', '--user', required=True, help='User account used to dump the TDO')
     arg_parser.add_argument('-d', '--domain', required=True, dest='domain', help='FQDN of the domain we authenticate with')
     arg_parser.add_argument('-p', '--password', required=False, dest='password', help='User password')

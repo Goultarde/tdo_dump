@@ -1,15 +1,21 @@
-# tdo_dump.py
+# tdo-dump
 
-Domain and forest [trusts](https://itm8.com/articles/sid-filter-as-security-boundary-between-domains-part-1) [are](https://harmj0y.medium.com/a-guide-to-attacking-domain-trusts-ef5f8992bb9d) [a](https://dirkjanm.io/active-directory-forest-trusts-part-one-how-does-sid-filtering-work/) [well-known](https://dirkjanm.io/active-directory-forest-trusts-part-two-trust-transitivity/) [research](https://adsecurity.org/?p=1588) [topic](https://adsecurity.org/?p=1640). Rather than revisiting all of its aspects, the present article focuses on one-way trusts: the account used for maintaining the trust between domains can be extracted with a new tool, **tdo_dump.py**, from the trusting domain and used to authenticate on the trusted domain. Thus, trusted domain objects can be helpful in performing lateral movement across security boundaries within Windows environments.
+Domain and forest [trusts](https://itm8.com/articles/sid-filter-as-security-boundary-between-domains-part-1) [are](https://harmj0y.medium.com/a-guide-to-attacking-domain-trusts-ef5f8992bb9d) [a](https://dirkjanm.io/active-directory-forest-trusts-part-one-how-does-sid-filtering-work/) [well-known](https://dirkjanm.io/active-directory-forest-trusts-part-two-trust-transitivity/) [research](https://adsecurity.org/?p=1588) [topic](https://adsecurity.org/?p=1640). Rather than revisiting all of its aspects, the present article focuses on one-way trusts: the account used for maintaining the trust between domains can be extracted with a new tool, **tdo-dump**, from the trusting domain and used to authenticate on the trusted domain. Thus, trusted domain objects can be helpful in performing lateral movement across security boundaries within Windows environments.
 
 More information in the [accompanying blog post](https://offsec.almond.consulting/trust-no-one_are-one-way-trusts-really-one-way.html).
 
-Note: `tdo_dump.py` needs the trusted domain object GUID and the ntDSDSA GUID. Those two GUIDs can be retrieved using your favorite AD object explorer.
+Note: `tdo-dump` needs the trusted domain object GUID and the ntDSDSA GUID. Those two GUIDs can be retrieved using your favorite AD object explorer.
+
+## Installation
+
+```console
+$ pipx install git+https://github.com/Goultarde/tdo_dump
+```
 
 ## Example
 
 ```console
-$ python dump_tdo.py -u Administrator -d offsec.lol -t sevres.offsec.lol --hashes 47465558945703bbe17c0b7a12c0627c --tdo-guid d0547ff6-8f3f-462c-9f2d-11c427320691  --dsa-guid 79a82840-4173-4402-8202-77c27639f2f2 --debug
+$ tdo-dump -u Administrator -d offsec.lol -t sevres.offsec.lol --hashes 47465558945703bbe17c0b7a12c0627c --tdo-guid d0547ff6-8f3f-462c-9f2d-11c427320691  --dsa-guid 79a82840-4173-4402-8202-77c27639f2f2 --debug
 [+] Calling hept_map: ('E3514235-4B06-11D1-AB04-00C04FC2DCD2', '4.0')
 [x] Binding string: ncacn_ip_tcp:10.0.0.1[49668]
 [+] Calling DRSBind
