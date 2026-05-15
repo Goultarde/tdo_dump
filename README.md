@@ -9,7 +9,7 @@ Note: `tdo-dump` needs the trusted domain object GUID and the ntDSDSA GUID. Thos
 ## Installation
 
 ```console
-$ pipx install git+https://github.com/Goultarde/tdo_dump
+pipx install git+https://github.com/Goultarde/tdo_dump
 ```
 
 ## Example
