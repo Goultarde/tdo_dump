@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tdo-dump"
+version = "1.0.0"
+description = "Dump trusted domain objects and extract their secrets via DRS replication"
+requires-python = ">=3.8"
+dependencies = [
+    "impacket",
+    "pycryptodomex",
+]
+
+[project.scripts]
+tdo-dump = "tdo_dump:main"
+
+[tool.setuptools]
+py-modules = ["tdo_dump"]

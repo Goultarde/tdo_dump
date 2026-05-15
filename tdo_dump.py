@@ -266,7 +266,11 @@ def argparser(argv):
         args.password = str()
     return args
 
-if __name__ == '__main__':
+debugprint = lambda *a, **k: None
+
+
+def main():
+    global debugprint
 
     args = argparser(sys.argv[1:])
     host = args.domain_controller
@@ -420,3 +424,7 @@ if __name__ == '__main__':
         process_tdo(trustPartner, domain, currentIncomingKey, True)
     if currentOutgoingKey:
         process_tdo(trustPartner, domain, currentOutgoingKey, False)
+
+
+if __name__ == '__main__':
+    main()
