@@ -185,6 +185,13 @@ def dump_tdo(dce, context_handle, dsa_guid, tdo_guid):
     record = dce.request(request)
     return record
 
+def record_is_empty(record):
+    # A wrong DSA GUID does not raise: DRSGetNCChanges returns successfully with
+    # zero objects. Callers treat that as a (retryable) failure, same as an
+    # actual DCERPCSessionError.
+    replyVersion = 'V{}'.format(record['pdwOutVersion'])
+    return record['pmsgOut'][replyVersion]['cNumObjects'] == 0
+
 def swap_ad_guid_bytes(guid):
     parts = guid.split('-')
     if len(parts) != 5:
@@ -334,41 +341,49 @@ def main():
 
     debugprint('[x] Context handle: {}'.format(hexlify(context_handle).decode('utf-8')))
 
-    # Synching the TDO object via DRSGetNCChanges
+    # Synching the TDO object via DRSGetNCChanges. A wrong DSA GUID shows up two
+    # ways: a DCERPCSessionError, or a successful call returning zero objects.
+    # normalize_ad_guid() leaves ambiguous v4 GUIDs (third group '4*4*') in their
+    # input form because the byte-swapped variant also starts with '4', so either
+    # symptom can simply mean the ambiguous GUID was in the wrong byte order.
+    # Treat both as one retryable failure and retry once with the GUIDs swapped.
+    # --raw skips this retry: the user told us the byte order explicitly.
+    retry_tdo = swap_ad_guid_bytes(tdo_guid) if is_ambiguous_ad_guid(tdo_guid) else tdo_guid
+    retry_dsa = swap_ad_guid_bytes(dsa_guid) if is_ambiguous_ad_guid(dsa_guid) else dsa_guid
+    can_retry = not args.raw_guid and (retry_tdo != tdo_guid or retry_dsa != dsa_guid)
+
+    record = None
+    first_error = None
     try:
         record = dump_tdo(dce, context_handle, dsa_guid, tdo_guid)
+        if record_is_empty(record):
+            record = None
+            first_error = 'DSA GUID not found!'
     except drsuapi.DCERPCSessionError as e:
-        # normalize_ad_guid() leaves ambiguous v4 GUIDs (third group '4*4*') in
-        # their input form because the byte-swapped variant also starts with
-        # '4'. If at least one of the two GUIDs is ambiguous, retry once with
-        # those swapped. --raw skips this retry: the user told us explicitly.
-        retry_tdo = swap_ad_guid_bytes(tdo_guid) if is_ambiguous_ad_guid(tdo_guid) else tdo_guid
-        retry_dsa = swap_ad_guid_bytes(dsa_guid) if is_ambiguous_ad_guid(dsa_guid) else dsa_guid
-        if args.raw_guid or (retry_tdo == tdo_guid and retry_dsa == dsa_guid):
-            drsuapi.hDRSUnbind(dce, context_handle)
-            print('[!] DRSGetNCChanges failed: {}'.format(e))
-            print('[!] Common causes: TDO GUID does not exist, DSA GUID does not exist, '
-                  'or the authenticated user lacks DRS replication rights on the target object.')
-            sys.exit(0)
-        debugprint('[+] DRSGetNCChanges failed ({}); ambiguous v4 GUID detected, '
-                   'retrying with byte-swapped GUIDs'.format(e))
+        first_error = 'DRSGetNCChanges failed: {}'.format(e)
+
+    if record is None and can_retry:
+        debugprint('[+] First attempt failed ({}); ambiguous v4 GUID detected, '
+                   'retrying with byte-swapped GUIDs'.format(first_error))
         try:
-            record = dump_tdo(dce, context_handle, retry_dsa, retry_tdo)
+            retried = dump_tdo(dce, context_handle, retry_dsa, retry_tdo)
+            if record_is_empty(retried):
+                debugprint('[!] Retry with byte-swapped ambiguous GUIDs also returned no objects')
+            else:
+                record = retried
+                tdo_guid, dsa_guid = retry_tdo, retry_dsa
         except drsuapi.DCERPCSessionError as e2:
-            drsuapi.hDRSUnbind(dce, context_handle)
-            print('[!] DRSGetNCChanges failed: {}'.format(e))
-            print('[!] Retry with byte-swapped ambiguous GUIDs also failed: {}'.format(e2))
-            print('[!] Common causes: TDO GUID does not exist, DSA GUID does not exist, '
-                  'or the authenticated user lacks DRS replication rights on the target object.')
-            sys.exit(0)
-        tdo_guid, dsa_guid = retry_tdo, retry_dsa
+            debugprint('[!] Retry with byte-swapped ambiguous GUIDs also failed: {}'.format(e2))
+
+    if record is None:
+        drsuapi.hDRSUnbind(dce, context_handle)
+        print('[!] {}'.format(first_error))
+        print('[!] Common causes: TDO GUID does not exist, DSA GUID does not exist, '
+              'or the authenticated user lacks DRS replication rights on the target object.')
+        sys.exit(0)
 
     drsuapi.hDRSUnbind(dce, context_handle)
     replyVersion = 'V{}'.format(record['pdwOutVersion'])
-
-    if record['pmsgOut'][replyVersion]['cNumObjects'] == 0:
-        print('[!] DSA GUID not found!')
-        sys.exit(0)
 
     # Extract secrets from the TDO
     print('[+] Distinguishe name retrieved: {}'.format(record['pmsgOut'][replyVersion]['pNC']['StringName'][:-1]))
